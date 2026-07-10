@@ -21,3 +21,17 @@ func TestTTL_LazyExpiration(t *testing.T) {
 		t.Fatalf("expected key to be expired and removed")
 	}
 }
+
+func TestTTL_ActiveSweeper(t *testing.T) {
+	s := New()
+	defer s.Stop()
+
+	s.SetWithTTL("k", "v", 50*time.Millisecond)
+
+	time.Sleep(125 * time.Millisecond)
+
+	_, ok := s.Get("k")
+	if ok {
+		t.Fatal("expected key to be removed by active sweeper")
+	}
+}

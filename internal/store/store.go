@@ -13,12 +13,47 @@ type entry struct {
 type Store struct {
 	mu   sync.RWMutex
 	data map[string]entry
+	stop chan struct{}
 }
 
 func New() *Store {
-	return &Store{
+	s := &Store{
 		data: make(map[string]entry),
+		stop: make(chan struct{}),
 	}
+	go s.startExpiryLoop(250 * time.Millisecond)
+	return s
+}
+
+func (s *Store) startExpiryLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.deleteExpiredKeys()
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+func (s *Store) deleteExpiredKeys() {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, e := range s.data {
+		if !e.expiry.IsZero() && now.After(e.expiry) {
+			delete(s.data, key)
+		}
+	}
+
+}
+
+func (s *Store) Stop() {
+	close(s.stop)
 }
 
 func (s *Store) Set(key, value string) {
