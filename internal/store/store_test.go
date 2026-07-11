@@ -3,7 +3,7 @@ package store
 import "testing"
 
 func TestStoreSetAndGet(t *testing.T) {
-	s := New()
+	s := New(0)
 
 	s.Set("hello", "world")
 
@@ -17,7 +17,7 @@ func TestStoreSetAndGet(t *testing.T) {
 }
 
 func TestStoreDelete(t *testing.T) {
-	s := New()
+	s := New(0)
 
 	s.Set("hello", "world")
 	s.Delete("hello")
@@ -29,7 +29,7 @@ func TestStoreDelete(t *testing.T) {
 }
 
 func TestStoreGetMissing(t *testing.T) {
-	s := New()
+	s := New(0)
 
 	_, ok := s.Get("missing")
 	if ok {

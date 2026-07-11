@@ -1,25 +1,31 @@
 package store
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
 
 type entry struct {
-	value  string
-	expiry time.Time
+	value   string
+	expiry  time.Time
+	element *list.Element
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	data map[string]entry
-	stop chan struct{}
+	mu       sync.RWMutex
+	data     map[string]entry
+	lruList  *list.List
+	capacity int
+	stop     chan struct{}
 }
 
-func New() *Store {
+func New(capacity int) *Store {
 	s := &Store{
-		data: make(map[string]entry),
-		stop: make(chan struct{}),
+		data:     make(map[string]entry),
+		capacity: capacity,
+		lruList:  list.New(),
+		stop:     make(chan struct{}),
 	}
 	go s.startExpiryLoop(250 * time.Millisecond)
 	return s
@@ -46,6 +52,7 @@ func (s *Store) deleteExpiredKeys() {
 
 	for key, e := range s.data {
 		if !e.expiry.IsZero() && now.After(e.expiry) {
+			s.lruList.Remove(e.element)
 			delete(s.data, key)
 		}
 	}
@@ -59,17 +66,46 @@ func (s *Store) Stop() {
 func (s *Store) Set(key, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = entry{value: value}
-}
+	if existing, ok := s.data[key]; ok {
+		s.lruList.Remove(existing.element)
+	}
+	element := s.lruList.PushFront(key)
 
+	s.data[key] = entry{value: value, element: element, expiry: time.Time{}}
+
+	if s.capacity > 0 && len(s.data) > s.capacity {
+		oldest := s.lruList.Back()
+		s.lruList.Remove(oldest)
+		delete(s.data, oldest.Value.(string))
+	}
+
+}
 func (s *Store) SetWithTTL(key, value string, ttl time.Duration) {
 	var exp time.Time
 	if ttl > 0 {
 		exp = time.Now().Add(ttl)
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = entry{value: value, expiry: exp}
+
+	if existing, ok := s.data[key]; ok {
+		s.lruList.Remove(existing.element)
+	}
+
+	element := s.lruList.PushFront(key)
+
+	s.data[key] = entry{
+		value:   value,
+		expiry:  exp,
+		element: element,
+	}
+
+	if s.capacity > 0 && len(s.data) > s.capacity {
+		oldest := s.lruList.Back()
+		s.lruList.Remove(oldest)
+		delete(s.data, oldest.Value.(string))
+	}
 }
 
 func (s *Store) Get(key string) (string, bool) {
@@ -92,6 +128,7 @@ func (s *Store) Get(key string) (string, bool) {
 		}
 
 		if !e2.expiry.IsZero() && time.Now().After(e2.expiry) {
+			s.lruList.Remove(e2.element)
 			delete(s.data, key)
 			return "", false
 		}
@@ -99,12 +136,22 @@ func (s *Store) Get(key string) (string, bool) {
 		return e2.value, true
 	}
 
-	val := e.value
 	s.mu.RUnlock()
-	return val, true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e3, ok3 := s.data[key]
+	if !ok3 {
+		return "", false
+	}
+	s.lruList.MoveToFront(e3.element)
+	return e3.value, true
 }
 func (s *Store) Delete(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, key)
+	if e, ok := s.data[key]; ok {
+		s.lruList.Remove(e.element)
+		delete(s.data, key)
+	}
 }

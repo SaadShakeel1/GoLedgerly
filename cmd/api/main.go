@@ -13,7 +13,7 @@ type application struct {
 
 func main() {
 	app := &application{
-		store: store.New(),
+		store: store.New(1000), // default capacity: 1000 keys
 	}
 
 	mux := app.routes()
