@@ -1,11 +1,24 @@
 package store
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestStoreSetAndGet(t *testing.T) {
-	s := New(0)
+	walFile := "test_store.wal"
+	defer os.Remove(walFile)
 
-	s.Set("hello", "world")
+	s, err := New(0, walFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	err = s.Set("hello", "world")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	got, ok := s.Get("hello")
 	if !ok {
@@ -17,7 +30,14 @@ func TestStoreSetAndGet(t *testing.T) {
 }
 
 func TestStoreDelete(t *testing.T) {
-	s := New(0)
+	walFile := "test_delete.wal"
+	defer os.Remove(walFile)
+
+	s, err := New(0, walFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
 
 	s.Set("hello", "world")
 	s.Delete("hello")
@@ -29,7 +49,14 @@ func TestStoreDelete(t *testing.T) {
 }
 
 func TestStoreGetMissing(t *testing.T) {
-	s := New(0)
+	walFile := "test_missing.wal"
+	defer os.Remove(walFile)
+
+	s, err := New(0, walFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
 
 	_, ok := s.Get("missing")
 	if ok {

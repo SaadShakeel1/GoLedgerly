@@ -18,17 +18,26 @@ type Store struct {
 	lruList  *list.List
 	capacity int
 	stop     chan struct{}
+	wal      *WAL
 }
 
-func New(capacity int) *Store {
+func New(capacity int, walPath string) (*Store, error) {
+	wal, err := NewWAL(walPath)
+	if err != nil {
+		return nil, err
+	}
 	s := &Store{
 		data:     make(map[string]entry),
 		capacity: capacity,
 		lruList:  list.New(),
 		stop:     make(chan struct{}),
+		wal:      wal,
+	}
+	if err := ReplayWAL(walPath, s); err != nil {
+		return nil, err
 	}
 	go s.startExpiryLoop(250 * time.Millisecond)
-	return s
+	return s, nil
 }
 
 func (s *Store) startExpiryLoop(interval time.Duration) {
@@ -59,11 +68,20 @@ func (s *Store) deleteExpiredKeys() {
 
 }
 
-func (s *Store) Stop() {
+func (s *Store) Stop() error {
 	close(s.stop)
+	return s.wal.Close()
 }
 
-func (s *Store) Set(key, value string) {
+func (s *Store) Set(key, value string) error {
+
+	if err := s.wal.LogSet(key, value); err != nil {
+		return err
+	}
+
+	if err := s.wal.Sync(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.data[key]; ok {
@@ -78,12 +96,21 @@ func (s *Store) Set(key, value string) {
 		s.lruList.Remove(oldest)
 		delete(s.data, oldest.Value.(string))
 	}
+	return nil
 
 }
-func (s *Store) SetWithTTL(key, value string, ttl time.Duration) {
+func (s *Store) SetWithTTL(key, value string, ttl time.Duration) error {
 	var exp time.Time
 	if ttl > 0 {
 		exp = time.Now().Add(ttl)
+	}
+
+	if err := s.wal.LogSetWithTTL(key, value, ttl); err != nil {
+		return err
+	}
+
+	if err := s.wal.Sync(); err != nil {
+		return err
 	}
 
 	s.mu.Lock()
@@ -106,6 +133,7 @@ func (s *Store) SetWithTTL(key, value string, ttl time.Duration) {
 		s.lruList.Remove(oldest)
 		delete(s.data, oldest.Value.(string))
 	}
+	return nil
 }
 
 func (s *Store) Get(key string) (string, bool) {
@@ -147,11 +175,18 @@ func (s *Store) Get(key string) (string, bool) {
 	s.lruList.MoveToFront(e3.element)
 	return e3.value, true
 }
-func (s *Store) Delete(key string) {
+func (s *Store) Delete(key string) error {
+	if err := s.wal.LogDelete(key); err != nil {
+		return err
+	}
+	if err := s.wal.Sync(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.data[key]; ok {
 		s.lruList.Remove(e.element)
 		delete(s.data, key)
 	}
+	return nil
 }

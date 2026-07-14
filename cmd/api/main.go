@@ -12,13 +12,18 @@ type application struct {
 }
 
 func main() {
+
+	s, err := store.New(1000, "./store.wal")
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := &application{
-		store: store.New(1000), // default capacity: 1000 keys
+		store: s,
 	}
 
 	mux := app.routes()
 
 	log.Println("starting server on :4000")
-	err := http.ListenAndServe(":4000", mux)
-	log.Fatal(err)
+	errr := http.ListenAndServe(":4000", mux)
+	log.Fatal(errr)
 }

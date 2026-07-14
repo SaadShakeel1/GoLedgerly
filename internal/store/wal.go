@@ -61,3 +61,71 @@ func (w *WAL) Close() error{
 	}
 	return w.file.Close()
 }
+
+func ReplayWAL(walPath string, store *Store) error {
+    file, err := os.Open(walPath)
+    if os.IsNotExist(err) {
+        return nil
+    }
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+
+    now := time.Now()
+    
+    scanner := bufio.NewScanner(file)
+
+    for scanner.Scan() {
+        line := scanner.Text() 
+        
+        if line == "" {
+            continue 
+        }
+
+        parts := strings.Fields(line)
+        if len(parts) == 0 {
+            continue
+        }
+
+        op := parts[0]
+        
+        switch op {
+        case "SET":
+            if len(parts) >= 3 {
+                key := parts[1]
+                value := strings.Join(parts[2:], " ") 
+                store.Set(key, value)
+            }
+
+        case "SET_TTL":
+           
+            if len(parts) >= 4 {
+                key := parts[1]
+                value := parts[2]
+                
+                ttlMs, err := strconv.ParseInt(parts[3], 10, 64)
+                if err != nil {
+                    continue
+                }
+                ttl := time.Duration(ttlMs) * time.Millisecond
+                
+                expiryTime := now.Add(ttl)
+
+                if now.After(expiryTime) {
+                    continue
+                }
+
+                store.SetWithTTL(key, value, expiryTime.Sub(now))
+            }
+
+        case "DEL":
+            if len(parts) >= 2 {
+                key := parts[1]
+                store.Delete(key)
+            }
+        }
+    }
+
+    return scanner.Err()
+}
