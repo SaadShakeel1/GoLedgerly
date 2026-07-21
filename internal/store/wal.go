@@ -35,9 +35,9 @@ func (w *WAL) LogSet(key, value string) error {
     return err
 }
 
-func (w* WAL) LogSetWithTTL(key,value string, ttl time.Duration) error{
-	ttlMs:=int64(ttl.Milliseconds())
-	line:=fmt.Sprintf("SET_TTL %s %s %d\n",key,value,ttlMs)
+func (w* WAL) LogSetWithTTL(key,value string, expiry time.Time) error{
+	expMs:=expiry.UnixMilli()
+	line:=fmt.Sprintf("SET_TTL %s %s %d\n",key,value,expMs)
 	_,err:=w.writer.WriteString(line)
 	return err
 }
@@ -94,35 +94,34 @@ func ReplayWAL(walPath string, store *Store) error {
         case "SET":
             if len(parts) >= 3 {
                 key := parts[1]
-                value := strings.Join(parts[2:], " ") 
-                store.Set(key, value)
+                value := strings.Join(parts[2:], " ")
+                store.set(key, value, time.Time{})
             }
 
         case "SET_TTL":
-           
+
             if len(parts) >= 4 {
                 key := parts[1]
-                value := parts[2]
-                
-                ttlMs, err := strconv.ParseInt(parts[3], 10, 64)
+                // timestamp is the last field; everything between key and it is the value
+                value := strings.Join(parts[2:len(parts)-1], " ")
+
+                expMs, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
                 if err != nil {
                     continue
                 }
-                ttl := time.Duration(ttlMs) * time.Millisecond
-                
-                expiryTime := now.Add(ttl)
+                expiry := time.UnixMilli(expMs)
 
-                if now.After(expiryTime) {
+                // already expired while the process was down: don't resurrect it
+                if !now.Before(expiry) {
                     continue
                 }
 
-                store.SetWithTTL(key, value, expiryTime.Sub(now))
+                store.set(key, value, expiry)
             }
 
         case "DEL":
             if len(parts) >= 2 {
-                key := parts[1]
-                store.Delete(key)
+                store.del(parts[1])
             }
         }
     }

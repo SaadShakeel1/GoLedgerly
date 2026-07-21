@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -16,6 +17,16 @@ func (app *application) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (app *application) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	stats := app.store.Stats()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		log.Printf("error encoding metrics: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+
 }
 
 func (app *application) getHandler(w http.ResponseWriter, r *http.Request) {
