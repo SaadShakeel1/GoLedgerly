@@ -9,5 +9,5 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /store/{key}", app.getHandler)
 	mux.HandleFunc("PUT /store/{key}", app.putHandler)
 	mux.HandleFunc("DELETE /store/{key}", app.deleteHandler)
-	return mux
+	return app.authenticate(mux)
 }

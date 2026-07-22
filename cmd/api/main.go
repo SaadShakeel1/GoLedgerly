@@ -3,12 +3,14 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/SaadShakeel1/goledgerly/internal/store"
 )
 
 type application struct {
-	store *store.Store
+	store  *store.Store
+	apiKey string
 }
 
 func main() {
@@ -17,8 +19,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	apiKey := os.Getenv("LEDGERLY_API_KEY")
+	if apiKey == "" {
+		log.Fatal("LEDGERLY_API_KEY must be set")
+	}
 	app := &application{
-		store: s,
+		store:  s,
+		apiKey: apiKey,
 	}
 
 	mux := app.routes()
