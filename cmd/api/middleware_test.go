@@ -4,10 +4,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/SaadShakeel1/goledgerly/internal/auth"
 )
 
 func TestAuthenticate(t *testing.T) {
-	app := &application{apiKey: "secret"}
+	secret := []byte("test-jwt-secret")
+	app := &application{jwtSecret: secret}
+
+	validToken, err := auth.Sign(secret, "client", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredToken, err := auth.Sign(secret, "client", -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var reached bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,10 +36,12 @@ func TestAuthenticate(t *testing.T) {
 		wantStatus  int
 		wantReached bool
 	}{
-		{"valid key", "/store/k", "Bearer secret", http.StatusOK, true},
-		{"wrong key", "/store/k", "Bearer nope", http.StatusUnauthorized, false},
+		{"valid token", "/store/k", "Bearer " + validToken, http.StatusOK, true},
+		{"expired token", "/store/k", "Bearer " + expiredToken, http.StatusUnauthorized, false},
+		{"garbage token", "/store/k", "Bearer not.a.jwt", http.StatusUnauthorized, false},
 		{"missing header", "/store/k", "", http.StatusUnauthorized, false},
 		{"health is public", "/health", "", http.StatusOK, true},
+		{"login is public", "/login", "", http.StatusOK, true},
 	}
 
 	for _, tt := range tests {

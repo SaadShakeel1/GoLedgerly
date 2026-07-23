@@ -9,8 +9,9 @@ import (
 )
 
 type application struct {
-	store  *store.Store
-	apiKey string
+	store     *store.Store
+	apiKey    string
+	jwtSecret []byte
 }
 
 func main() {
@@ -23,9 +24,14 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("LEDGERLY_API_KEY must be set")
 	}
+	jwtSecret := os.Getenv("LEDGERLY_JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("LEDGERLY_JWT_SECRET must be set")
+	}
 	app := &application{
-		store:  s,
-		apiKey: apiKey,
+		store:     s,
+		apiKey:    apiKey,
+		jwtSecret: []byte(jwtSecret),
 	}
 
 	mux := app.routes()
