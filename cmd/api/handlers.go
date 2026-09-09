@@ -1,15 +1,12 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/SaadShakeel1/goledgerly/internal/auth"
 )
 
 func (app *application) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -20,44 +17,6 @@ func (app *application) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-// issueToken signs a fresh 15-minute token for subject and writes it as JSON.
-func (app *application) issueToken(w http.ResponseWriter, subject string) {
-	token, err := auth.Sign(app.jwtSecret, subject, 15*time.Minute)
-	if err != nil {
-		log.Printf("error signing token: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{"token": token}); err != nil {
-		log.Printf("error encoding token: %v", err)
-	}
-}
-
-func (app *application) loginHandler(w http.ResponseWriter, r *http.Request) {
-	// Prove identity with the shared API key, receive a short-lived token.
-	const prefix = "Bearer "
-	header := r.Header.Get("Authorization")
-	key := strings.TrimPrefix(header, prefix)
-	if !strings.HasPrefix(header, prefix) ||
-		subtle.ConstantTimeCompare([]byte(key), []byte(app.apiKey)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	app.issueToken(w, "client")
-}
-
-func (app *application) refreshHandler(w http.ResponseWriter, r *http.Request) {
-	// This route is behind the auth middleware, so a valid token is guaranteed
-	// and its claims are on the context. We just mint a new one for the same subject.
-	claims, ok := claimsFromContext(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	app.issueToken(w, claims.Subject)
 }
 
 func (app *application) metricsHandler(w http.ResponseWriter, r *http.Request) {

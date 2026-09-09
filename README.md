@@ -1,6 +1,6 @@
 # ⚡ GoLedgerly
 
-> A staged, from-scratch distributed key-value store built in Go, featuring active/lazy TTL expiration, $O(1)$ LRU eviction, Write-Ahead Log (WAL) crash recovery, and handcrafted zero-dependency JWT authentication.
+> A staged, from-scratch distributed key-value store built in Go, featuring active/lazy TTL expiration, $O(1)$ LRU eviction, Write-Ahead Log (WAL) crash recovery, and atomic operational metrics.
 
 ![Go Version](https://img.shields.io/badge/Go-1.26%2B-00ADD8?style=for-the-badge&logo=go)
 ![Architecture](https://img.shields.io/badge/Architecture-Decoupled_KV_Engine-blueviolet?style=for-the-badge)
@@ -16,7 +16,7 @@
 | **Stage 0** | **Single-Node In-Memory Store** | ✅ Complete | Thread-safe `sync.RWMutex`, HTTP API (`GET`/`PUT`/`DELETE`) |
 | **Stage 1** | **TTL Expiration & LRU Eviction** | ✅ Complete | Dual-phase TTL (lazy + 250ms active sweeper), $O(1)$ `container/list` LRU |
 | **Stage 2** | **WAL Persistence & Recovery** | ✅ Complete | Append-only logging with `fsync`, automatic startup replay |
-| **Stage 3** | **Production Readiness & Security** | 🚧 In Progress | Handcrafted JWT auth, Bearer middleware, atomic metrics (`sync/atomic`) |
+| **Stage 3** | **Production Readiness** | 🚧 In Progress | Atomic metrics complete; rate limiting, tests, and benchmarks planned |
 | **Stage 4** | **Leader-Follower Replication** | ⏳ Planned | Primary-secondary streaming replication & read-scaling |
 | **Stage 5** | **Raft Consensus Protocol** | ⏳ Optional | Dynamic leader election & distributed strong consistency |
 
@@ -28,14 +28,14 @@
                       ┌─────────────────────────────────────────┐
                       │           HTTP Client / cURL            │
                       └────────────────────┬────────────────────┘
-                                           │ Request (Bearer JWT)
+                                           │ Request
                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │  cmd/api (HTTP Transport Layer)                                                 │
 │                                                                                 │
 │   ┌─────────────────────┐      ┌──────────────────┐     ┌────────────────────┐  │
-│   │ Authenticate        ├─────►│ ServeMux Router  ├────►│ Request Handlers   │  │
-│   │ Middleware          │      │ (Go 1.22+ Mux)   │     │ (application*)     │  │
+│   │ HTTP Server         ├─────►│ ServeMux Router  ├────►│ Request Handlers   │  │
+│   │                     │      │ (Go 1.22+ Mux)   │     │ (application*)     │  │
 │   └─────────────────────┘      └──────────────────┘     └─────────┬──────────┘  │
 └───────────────────────────────────────────────────────────────────┼─────────────┘
                                                                     │ Method Calls
@@ -81,9 +81,6 @@
 - Every mutation (`SET`, `SET_TTL`, `DEL`) writes to an append-only log file (`store.wal`) and invokes `file.Sync()` for physical disk persistence.
 - On node startup, `ReplayWAL()` restores state into memory while safely discarding keys that expired while the server was down.
 
-### 6. Zero-Dependency Cryptographic Auth
-- Custom HMAC-SHA256 JWT implementation (`internal/auth/jwt.go`) built from first principles using Go standard library (`crypto/hmac`, `encoding/base64`, `crypto/sha256`).
-
 ---
 
 ## 📁 Repository Structure
@@ -94,14 +91,8 @@ GoLedgerly/
 │   └── api/
 │       ├── main.go          # Application wiring, env configuration, server boot
 │       ├── routes.go        # HTTP route registration
-│       ├── handlers.go      # HTTP handlers (*application receiver methods)
-│       ├── handlers_test.go # Integration test suite for HTTP API
-│       ├── middleware.go    # Bearer JWT authentication middleware
-│       └── middleware_test.go
+│       └── handlers.go      # HTTP handlers (*application receiver methods)
 └── internal/
-    ├── auth/
-    │   ├── jwt.go           # HMAC-SHA256 JWT sign & verification
-    │   └── jwt_test.go      # Unit tests for JWT issuance & expiration
     └── store/
         ├── store.go         # Core KV engine, RWMutex, LRU, & TTL loop
         ├── store_test.go    # Unit tests for store operations
@@ -115,15 +106,7 @@ GoLedgerly/
 
 ## ⚡ Quickstart Guide
 
-### 1. Configure Environment
-Set required secrets:
-
-```bash
-export LEDGERLY_API_KEY="super-secret-api-key"
-export LEDGERLY_JWT_SECRET="256-bit-secret-for-jwt-signing"
-```
-
-### 2. Run the Server
+### 1. Run the Server
 ```bash
 go run ./cmd/api
 ```
@@ -142,34 +125,25 @@ curl -i http://localhost:4000/health
 {"status":"ok"}
 ```
 
-### 2. Authenticate & Obtain JWT Token
-```bash
-TOKEN=$(curl -s -X POST http://localhost:4000/login \
-  -H "Authorization: Bearer super-secret-api-key" | jq -r '.token')
-```
-
-### 3. Set a Key with a 30-Second TTL
+### 2. Set a Key with a 30-Second TTL
 ```bash
 curl -i -X PUT "http://localhost:4000/store/session_99?ttl=30s" \
-  -H "Authorization: Bearer $TOKEN" \
   -d '{"user_id": 42, "role": "admin"}'
 ```
 **Response**: `201 Created`
 
-### 4. Retrieve Key
+### 3. Retrieve Key
 ```bash
-curl -i http://localhost:4000/store/session_99 \
-  -H "Authorization: Bearer $TOKEN"
+curl -i http://localhost:4000/store/session_99
 ```
 **Response (`200 OK`)**:
 ```json
 {"user_id": 42, "role": "admin"}
 ```
 
-### 5. Inspect Live Operational Metrics
+### 4. Inspect Live Operational Metrics
 ```bash
-curl -s http://localhost:4000/metrics \
-  -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:4000/metrics
 ```
 **Response (`200 OK`)**:
 ```json

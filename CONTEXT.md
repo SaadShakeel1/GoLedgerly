@@ -7,7 +7,7 @@ A staged, from-scratch build of a distributed key-value store in Go, done as a l
 0. Single-node in-memory cache with HTTP API (mutex-protected)
 1. TTL expiration + O(1) LRU eviction
 2. Persistence via write-ahead log (WAL), replay on startup, graceful shutdown
-3. Production concerns: auth middleware, token-bucket rate limiting, metrics endpoint, health check, full test suite, benchmarks
+3. Production concerns: token-bucket rate limiting, metrics endpoint, health check, full test suite, benchmarks
 4. Leader-follower replication across nodes
 5. Raft consensus (optional, ambitious)
 

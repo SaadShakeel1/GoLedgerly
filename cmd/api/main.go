@@ -3,15 +3,12 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/SaadShakeel1/goledgerly/internal/store"
 )
 
 type application struct {
-	store     *store.Store
-	apiKey    string
-	jwtSecret []byte
+	store *store.Store
 }
 
 func main() {
@@ -20,18 +17,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	apiKey := os.Getenv("LEDGERLY_API_KEY")
-	if apiKey == "" {
-		log.Fatal("LEDGERLY_API_KEY must be set")
-	}
-	jwtSecret := os.Getenv("LEDGERLY_JWT_SECRET")
-	if jwtSecret == "" {
-		log.Fatal("LEDGERLY_JWT_SECRET must be set")
-	}
 	app := &application{
-		store:     s,
-		apiKey:    apiKey,
-		jwtSecret: []byte(jwtSecret),
+		store: s,
 	}
 
 	mux := app.routes()
