@@ -13,13 +13,14 @@ type entry struct {
 }
 
 type Store struct {
-	mu       sync.RWMutex
-	data     map[string]entry
-	lruList  *list.List
-	capacity int
-	stop     chan struct{}
-	wal      *WAL
-	metrics  *Metrics
+	mu         sync.RWMutex
+	mutationMu sync.Mutex
+	data       map[string]entry
+	lruList    *list.List
+	capacity   int
+	stop       chan struct{}
+	wal        *WAL
+	metrics    *Metrics
 }
 
 func New(capacity int, walPath string) (*Store, error) {
@@ -86,17 +87,21 @@ func (s *Store) deleteExpiredKeys() {
 }
 
 func (s *Store) Stop() error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	close(s.stop)
 	return s.wal.Close()
 }
 
 func (s *Store) Set(key, value string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	if err := s.wal.LogSet(key, value); err != nil {
 		return err
 	}
-	if err := s.wal.Sync(); err != nil {
-		return err
-	}
+
 	s.set(key, value, time.Time{})
 	return nil
 }
@@ -126,13 +131,12 @@ func (s *Store) SetWithTTL(key, value string, ttl time.Duration) error {
 		return s.Set(key, value)
 	}
 
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	exp := time.Now().Add(ttl)
 
 	if err := s.wal.LogSetWithTTL(key, value, exp); err != nil {
-		return err
-	}
-
-	if err := s.wal.Sync(); err != nil {
 		return err
 	}
 
@@ -189,12 +193,13 @@ func (s *Store) Get(key string) (string, bool) {
 }
 
 func (s *Store) Delete(key string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	if err := s.wal.LogDelete(key); err != nil {
 		return err
 	}
-	if err := s.wal.Sync(); err != nil {
-		return err
-	}
+
 	s.del(key)
 	return nil
 }
