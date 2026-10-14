@@ -78,8 +78,9 @@
 - Combines Go's standard `container/list` doubly-linked list with a map pointer index. Accessing a key moves it to the front; exceeding capacity evicts the tail element in $O(1)$ time complexity.
 
 ### 5. Crash Resilience via Write-Ahead Log (WAL)
-- Every mutation (`SET`, `SET_TTL`, `DEL`) writes to an append-only log file (`store.wal`) and invokes `file.Sync()` for physical disk persistence.
-- On node startup, `ReplayWAL()` restores state into memory while safely discarding keys that expired while the server was down.
+- Every mutation writes a versioned JSON record with a monotonic sequence number to the append-only `store.wal`, then invokes `file.Sync()` before applying the mutation in memory.
+- Set records include absolute TTL deadlines and the actual LRU eviction decision, so replay restores the same logical dataset instead of trying to reconstruct read history.
+- Startup replay accepts legacy text records, rejects corrupt complete records, safely removes an incomplete crash-tail record, and supports multiline values up to the configured WAL record limit.
 
 ---
 
