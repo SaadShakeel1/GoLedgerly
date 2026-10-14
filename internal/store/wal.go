@@ -133,6 +133,7 @@ func ReplayWAL(walPath string, store *Store) error {
 
 				expiry := time.UnixMilli(expiryMilliseconds)
 				if !now.Before(expiry) {
+					store.del(key)
 					continue
 				}
 
