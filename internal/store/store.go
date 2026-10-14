@@ -39,6 +39,7 @@ func New(capacity int, walPath string) (*Store, error) {
 	}
 
 	if err := ReplayWAL(walPath, s); err != nil {
+		_ = wal.Close()
 		return nil, err
 	}
 
@@ -102,14 +103,22 @@ func (s *Store) Stop() error {
 }
 
 func (s *Store) Set(key, value string) error {
+	return s.setAndLog(key, value, time.Time{})
+}
+
+func (s *Store) setAndLog(key, value string, expiry time.Time) error {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 
-	if err := s.wal.LogSet(key, value); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	evictedKey := s.evictionCandidateLocked(key)
+	if err := s.wal.LogSet(key, value, expiry, evictedKey); err != nil {
 		return err
 	}
 
-	s.set(key, value, time.Time{})
+	s.applySetLocked(key, value, expiry, evictedKey, true)
 
 	return nil
 }
@@ -117,6 +126,40 @@ func (s *Store) Set(key, value string) error {
 func (s *Store) set(key, value string, expiry time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	evictedKey := s.evictionCandidateLocked(key)
+	s.applySetLocked(key, value, expiry, evictedKey, false)
+}
+
+func (s *Store) evictionCandidateLocked(key string) *string {
+	if s.capacity <= 0 || len(s.data) < s.capacity {
+		return nil
+	}
+	if _, exists := s.data[key]; exists {
+		return nil
+	}
+
+	oldest := s.lruList.Back()
+	if oldest == nil {
+		return nil
+	}
+
+	evictedKey := oldest.Value.(string)
+	return &evictedKey
+}
+
+func (s *Store) applySetLocked(
+	key string,
+	value string,
+	expiry time.Time,
+	evictedKey *string,
+	countEviction bool,
+) {
+	if evictedKey != nil {
+		if s.deleteLocked(*evictedKey) && countEviction {
+			s.metrics.Evictions.Add(1)
+		}
+	}
 
 	if existing, ok := s.data[key]; ok {
 		s.lruList.Remove(existing.element)
@@ -128,13 +171,27 @@ func (s *Store) set(key, value string, expiry time.Time) {
 		expiry:  expiry,
 		element: element,
 	}
+}
 
-	if s.capacity > 0 && len(s.data) > s.capacity {
-		oldest := s.lruList.Back()
-		s.lruList.Remove(oldest)
-		delete(s.data, oldest.Value.(string))
-		s.metrics.Evictions.Add(1)
+func (s *Store) applySetFromWAL(
+	key string,
+	value string,
+	expiry time.Time,
+	evictedKey *string,
+	now time.Time,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if evictedKey != nil {
+		s.deleteLocked(*evictedKey)
 	}
+	if !expiry.IsZero() && !now.Before(expiry) {
+		s.deleteLocked(key)
+		return
+	}
+
+	s.applySetLocked(key, value, expiry, nil, false)
 }
 
 func (s *Store) SetWithTTL(key string, value string, ttl time.Duration) error {
@@ -142,18 +199,8 @@ func (s *Store) SetWithTTL(key string, value string, ttl time.Duration) error {
 		return s.Set(key, value)
 	}
 
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
-
 	expiry := time.Now().Add(ttl)
-
-	if err := s.wal.LogSetWithTTL(key, value, expiry); err != nil {
-		return err
-	}
-
-	s.set(key, value, expiry)
-
-	return nil
+	return s.setAndLog(key, value, expiry)
 }
 
 func (s *Store) Get(key string) (string, bool) {
@@ -211,11 +258,14 @@ func (s *Store) Delete(key string) error {
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.wal.LogDelete(key); err != nil {
 		return err
 	}
 
-	s.del(key)
+	s.deleteLocked(key)
 
 	return nil
 }
@@ -224,8 +274,15 @@ func (s *Store) del(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.deleteLocked(key)
+}
+
+func (s *Store) deleteLocked(key string) bool {
 	if existing, ok := s.data[key]; ok {
 		s.lruList.Remove(existing.element)
 		delete(s.data, key)
+		return true
 	}
+
+	return false
 }
