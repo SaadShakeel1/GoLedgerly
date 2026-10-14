@@ -28,6 +28,7 @@ func New(capacity int, walPath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	s := &Store{
 		data:     make(map[string]entry),
 		capacity: capacity,
@@ -36,15 +37,20 @@ func New(capacity int, walPath string) (*Store, error) {
 		wal:      wal,
 		metrics:  &Metrics{},
 	}
+
 	if err := ReplayWAL(walPath, s); err != nil {
 		return nil, err
 	}
+
 	go s.startExpiryLoop(250 * time.Millisecond)
+
 	return s, nil
 }
+
 func (s *Store) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return len(s.data)
 }
 
@@ -74,6 +80,7 @@ func (s *Store) startExpiryLoop(interval time.Duration) {
 
 func (s *Store) deleteExpiredKeys() {
 	now := time.Now()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -103,20 +110,24 @@ func (s *Store) Set(key, value string) error {
 	}
 
 	s.set(key, value, time.Time{})
+
 	return nil
 }
 
-// set mutates in-memory state only. Callers own the WAL: the public writers
-// call it after logging, replay calls it without logging (so replaying the WAL
-// never appends back into the file it is reading).
-func (s *Store) set(key, value string, exp time.Time) {
+func (s *Store) set(key, value string, expiry time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if existing, ok := s.data[key]; ok {
 		s.lruList.Remove(existing.element)
 	}
+
 	element := s.lruList.PushFront(key)
-	s.data[key] = entry{value: value, element: element, expiry: exp}
+	s.data[key] = entry{
+		value:   value,
+		expiry:  expiry,
+		element: element,
+	}
 
 	if s.capacity > 0 && len(s.data) > s.capacity {
 		oldest := s.lruList.Back()
@@ -125,22 +136,23 @@ func (s *Store) set(key, value string, exp time.Time) {
 		s.metrics.Evictions.Add(1)
 	}
 }
-func (s *Store) SetWithTTL(key, value string, ttl time.Duration) error {
+
+func (s *Store) SetWithTTL(key string, value string, ttl time.Duration) error {
 	if ttl <= 0 {
-		// no positive TTL means a permanent key; log it as a plain SET
 		return s.Set(key, value)
 	}
 
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 
-	exp := time.Now().Add(ttl)
+	expiry := time.Now().Add(ttl)
 
-	if err := s.wal.LogSetWithTTL(key, value, exp); err != nil {
+	if err := s.wal.LogSetWithTTL(key, value, expiry); err != nil {
 		return err
 	}
 
-	s.set(key, value, exp)
+	s.set(key, value, expiry)
+
 	return nil
 }
 
@@ -160,14 +172,14 @@ func (s *Store) Get(key string) (string, bool) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		e2, ok2 := s.data[key]
-		if !ok2 {
+		currentEntry, stillExists := s.data[key]
+		if !stillExists {
 			s.metrics.Misses.Add(1)
 			return "", false
 		}
 
-		if !e2.expiry.IsZero() && time.Now().After(e2.expiry) {
-			s.lruList.Remove(e2.element)
+		if !currentEntry.expiry.IsZero() && time.Now().After(currentEntry.expiry) {
+			s.lruList.Remove(currentEntry.element)
 			delete(s.data, key)
 			s.metrics.Expirations.Add(1)
 			s.metrics.Misses.Add(1)
@@ -175,21 +187,24 @@ func (s *Store) Get(key string) (string, bool) {
 		}
 
 		s.metrics.Hits.Add(1)
-		return e2.value, true
+		return currentEntry.value, true
 	}
 
 	s.mu.RUnlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	e3, ok3 := s.data[key]
-	if !ok3 {
+	currentEntry, stillExists := s.data[key]
+	if !stillExists {
 		s.metrics.Misses.Add(1)
 		return "", false
 	}
-	s.lruList.MoveToFront(e3.element)
+
+	s.lruList.MoveToFront(currentEntry.element)
 	s.metrics.Hits.Add(1)
-	return e3.value, true
+
+	return currentEntry.value, true
 }
 
 func (s *Store) Delete(key string) error {
@@ -201,15 +216,16 @@ func (s *Store) Delete(key string) error {
 	}
 
 	s.del(key)
+
 	return nil
 }
 
-// del mutates in-memory state only; see set for why replay uses this directly.
 func (s *Store) del(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e, ok := s.data[key]; ok {
-		s.lruList.Remove(e.element)
+
+	if existing, ok := s.data[key]; ok {
+		s.lruList.Remove(existing.element)
 		delete(s.data, key)
 	}
 }
